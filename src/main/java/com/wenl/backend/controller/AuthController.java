@@ -1,10 +1,12 @@
 package com.wenl.backend.controller;
 
 import com.wenl.backend.model.User;
+import com.wenl.backend.security.CustomUserDetails;
 import com.wenl.backend.service.AuthService;
-import com.wenl.backend.util.JwtUtil;
+import com.wenl.backend.utils.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -26,9 +28,9 @@ public class AuthController {
 
     // Inicio de sesión
     @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestBody User user) {
-        User authenticatedUser = authService.authenticate(user.getEmail(), user.getPassword());
-        String token = jwtUtil.generateToken(authenticatedUser.getEmail());
+    public ResponseEntity<String> login(@RequestBody CustomUserDetails user) {
+        CustomUserDetails authenticatedUser = authService.authenticate(user.getUsername(), user.getPassword());
+        String token = jwtUtil.generateToken(authenticatedUser);
         return ResponseEntity.ok(token);
     }
 

@@ -1,13 +1,7 @@
 package com.wenl.backend.filter;
 
-import com.wenl.backend.util.JwtUtil;
+import com.wenl.backend.utils.JwtUtil;
 import io.jsonwebtoken.ExpiredJwtException;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j; // Importa Slf4j para el logging
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -16,69 +10,93 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.io.PrintWriter;
+import java.security.SignatureException;
 
-@Slf4j // Usa Slf4j para el logging
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @Component
 public class JwtRequestFilter extends OncePerRequestFilter {
 
-    @Autowired
-    private UserDetailsService userDetailsService;
+    private static final Logger logger = LoggerFactory.getLogger(JwtRequestFilter.class);
 
-    @Autowired
-    private JwtUtil jwtUtil;
+    private final UserDetailsService userDetailsService;
+    private final JwtUtil jwtUtil;
+
+    public JwtRequestFilter(UserDetailsService userDetailsService, JwtUtil jwtUtil) {
+        this.userDetailsService = userDetailsService;
+        this.jwtUtil = jwtUtil;
+    }
 
     @Override
-    public void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
+
+        // Clear security context at the start of each request
+        SecurityContextHolder.clearContext();
 
         final String authorizationHeader = request.getHeader("Authorization");
 
         String username = null;
         String jwt = null;
 
-        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
-            jwt = authorizationHeader.substring(7);
-            try {
-                username = jwtUtil.extractUsername(jwt);
-            } catch (ExpiredJwtException e) {
-                log.info("Token JWT expirado");
+        try {
+            if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+                jwt = authorizationHeader.substring(7);
+                username = jwtUtil.getUsernameFromToken(jwt);
             }
 
-        } else {
-            log.warn("JWT no encontrado o formato incorrecto");
-        }
+            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
 
+                // Validate token BEFORE loading user to prevent unnecessary DB calls
+                if (jwtUtil.validateTokenStructure(jwt)) { // New method to check signature/expiry
 
-        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                    UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
 
-            UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
+                    // Secondary validation with user details
+                    if (jwtUtil.validateTokenAgainstUser(jwt, userDetails)) {
 
-            if (jwtUtil.validateToken(jwt, userDetails.getUsername())) { // Corrected line
+                        UsernamePasswordAuthenticationToken authenticationToken =
+                                new UsernamePasswordAuthenticationToken(
+                                        userDetails,
+                                        null,
+                                        userDetails.getAuthorities()
+                                );
 
-                UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                usernamePasswordAuthenticationToken
-                        .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(usernamePasswordAuthenticationToken);
+                        authenticationToken.setDetails(
+                                new WebAuthenticationDetailsSource().buildDetails(request)
+                        );
+
+                        SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                        logger.info("Authenticated user: {}", username);
+                    }
+                }
             }
+        } catch (ExpiredJwtException ex) {
+            logger.warn("JWT Token expired: {}", ex.getMessage());
+            sendError(response, HttpServletResponse.SC_UNAUTHORIZED, "Token expired");
+            return;
+        } catch (SignatureException ex) {
+            logger.warn("Invalid JWT signature: {}", ex.getMessage());
+            sendError(response, HttpServletResponse.SC_UNAUTHORIZED, "Invalid token signature");
+            return;
+        } catch (Exception ex) {
+            logger.error("Authentication error", ex);
+            sendError(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Authentication failed");
+            return;
         }
 
-        if (username == null && jwt != null) { // Solo si no se pudo extraer el username y hay token
-            try {
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                response.setContentType("application/json");
-                PrintWriter out = response.getWriter();
-                out.write("{\"message\": \"Unauthorized\"}");
-                out.flush();
-            } catch (IOException e) {
-                log.error("Error escribiendo en la respuesta", e);
-                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // Error genérico
-            }
-            return; // Detener la cadena de filtros
-        }
+        chain.doFilter(request, response);
+    }
 
-        filterChain.doFilter(request, response);
+    private void sendError(HttpServletResponse response, int status, String message) throws IOException {
+        response.setStatus(status);
+        response.getWriter().write(message);
+        response.getWriter().flush();
     }
 }
