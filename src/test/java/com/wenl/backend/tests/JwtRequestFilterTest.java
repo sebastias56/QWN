@@ -14,6 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 
@@ -53,7 +54,7 @@ class JwtRequestFilterTest {
         // Arrange
         String invalidToken = "invalid.token.here";
         when(request.getHeader("Authorization")).thenReturn("Bearer " + invalidToken);
-        when(jwtUtil.getUsernameFromToken(invalidToken)).thenThrow(new SignatureException("Invalid token"));
+        when(jwtUtil.extractUsername(invalidToken)).thenThrow(new SignatureException("Invalid token"));
 
         // Act
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
@@ -67,16 +68,16 @@ class JwtRequestFilterTest {
         // Arrange
         String validToken = "valid.token.here";
         String username = "user@example.com";
-        UserDetails userDetails = new org.springframework.security.core.userdetails.User(
+        User userDetails = new org.springframework.security.core.userdetails.User(
                 username,
                 "password",
                 Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER"))
         );
 
         when(request.getHeader("Authorization")).thenReturn("Bearer " + validToken);
-        when(jwtUtil.getUsernameFromToken(validToken)).thenReturn(username);
+        when(jwtUtil.extractUsername(validToken)).thenReturn(username);
         when(userDetailsService.loadUserByUsername(username)).thenReturn(userDetails);
-        when(jwtUtil.validateToken(validToken, userDetails.getUsername())).thenReturn(true);
+        when(jwtUtil.validateTokenAgainstUser(validToken, userDetails)).thenReturn(true);
 
         // Clear previous authentication
         SecurityContextHolder.clearContext();

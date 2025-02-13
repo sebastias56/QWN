@@ -29,7 +29,7 @@ public class AuthController {
     // Inicio de sesión
     @PostMapping("/login")
     public ResponseEntity<String> login(@RequestBody CustomUserDetails user) {
-        CustomUserDetails authenticatedUser = authService.authenticate(user.getUsername(), user.getPassword());
+        User authenticatedUser = authService.authenticate(user.getUsername(), user.getPassword());
         String token = jwtUtil.generateToken(authenticatedUser);
         return ResponseEntity.ok(token);
     }
